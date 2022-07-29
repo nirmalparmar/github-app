@@ -26,9 +26,10 @@ async function getOrganisationRepos(org, endCursor) {
     body = {
         query
     }
+    // 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
     let headers = {
         "Accept": "application/vnd.github+json",
-        "Authorization": `bearer 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`
+        "Authorization": `bearer ${process.env.ACCESS_TOKEN.trim()}`
     }
     return axios.post(url, body, {headers})
 }
@@ -37,7 +38,7 @@ async function getContributorsOfRepo(org, repoName, numberOfContributors){
     let url = `${process.env.BASE_REST_URI}/repos/${org}/${repoName}/stats/contributors`
     let headers = {
         "Accept": "application/vnd.github+json",
-        "Authorization": `token ${process.env.ACCESS_TOKEN}`
+        "Authorization": `token ${process.env.ACCESS_TOKEN.trim()}`
     }
     return axios.get(url, {headers}).then(res => {
         if(res.data) {
@@ -57,28 +58,38 @@ exports.getOrganisationRepos = async (req, res, next) => {
     let repos = []
     let makeRequest = true
     let endCursor = null
-    let noOfRepos = req.query.n || process.env.DEFAULT_REPO_COUNT
+    let noOfRepos = req.query.n || parseInt(process.env.DEFAULT_REPO_COUNT)
     while(makeRequest){
-        let res1 = await getOrganisationRepos(req.params.organisation, endCursor);
-        repos.push(...res1.data.data.organization.repositories.edges)
-        makeRequest = res1.data.data.organization.repositories.pageInfo.hasNextPage
-        endCursor = res1.data.data.organization.repositories.pageInfo.endCursor
+        try{
+            let res1 = await getOrganisationRepos(req.params.organisation, endCursor);
+            repos.push(...res1.data.data.organization.repositories.edges)
+            makeRequest = res1.data.data.organization.repositories.pageInfo.hasNextPage
+            endCursor = res1.data.data.organization.repositories.pageInfo.endCursor
+        } catch (err) {
+            console.log(err);
+            break
+        }
     }
     repos.sort((a,b) => {
         return b.node.forkCount - a.node.forkCount
     })
     repos = repos.slice(0,noOfRepos)
     result = []
-    let numberOfContributors = req.query.m || process.env.DEFAULT_USER_COUNT
+    let numberOfContributors = req.query.m || parseInt(process.env.DEFAULT_USER_COUNT)
     for (let repo of repos) {
-        let contributors = await getContributorsOfRepo(req.params.organisation, repo.node.name, numberOfContributors)
-        result.push({
-            repoName: repo.node.name,
-            organization: req.params.organisation,
-            url: repo.node.url,
-            topMCommittees: contributors,
-            forkCount: repo.node.forkCount
-        })
+        try {
+            let contributors = await getContributorsOfRepo(req.params.organisation, repo.node.name, numberOfContributors)
+            result.push({
+                repoName: repo.node.name,
+                organization: req.params.organisation,
+                url: repo.node.url,
+                topMCommittees: contributors,
+                forkCount: repo.node.forkCount
+            })
+        } catch (err) {
+            console.log(err)
+            break
+        }   
     }
     
     res.json(result)
