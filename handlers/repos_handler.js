@@ -57,7 +57,7 @@ exports.getOrganisationRepos = async (req, res, next) => {
     let repos = []
     let makeRequest = true
     let endCursor = null
-    let noOfRepos = req.query.n
+    let noOfRepos = req.query.n || process.env.DEFAULT_REPO_COUNT
     while(makeRequest){
         let res1 = await getOrganisationRepos(req.params.organisation, endCursor);
         repos.push(...res1.data.data.organization.repositories.edges)
@@ -69,8 +69,9 @@ exports.getOrganisationRepos = async (req, res, next) => {
     })
     repos = repos.slice(0,noOfRepos)
     result = []
+    let numberOfContributors = req.query.m || process.env.DEFAULT_USER_COUNT
     for (let repo of repos) {
-        let contributors = await getContributorsOfRepo(req.params.organisation, repo.node.name, req.query.m)
+        let contributors = await getContributorsOfRepo(req.params.organisation, repo.node.name, numberOfContributors)
         result.push({
             repoName: repo.node.name,
             organization: req.params.organisation,
