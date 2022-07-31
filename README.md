@@ -18,6 +18,9 @@
 
     curl -i -H 'Accept: application/json' http://localhost:3000/repos/org/{organisation}?n={number}&m={number}
 
+## Deployed sample app at
+    http://github-app-sample.herokuapp.com/repos/org/facebook?m=2&n=2
+
 ### Response
 
     HTTP/1.1 200 OK
@@ -33,9 +36,9 @@
                 "repoName": String,
                 "organization": String,
                 "url": String,
-                "topMCommittees":[
+                "contributer":[
                     {
-                        "totalCommit": Integer,
+                        "total": Integer,
                         "userName": String
                     }
                 ],

@@ -1,20 +1,24 @@
 const axios = require('axios').default;
+const { findAndDelete, createEntry, findAndUpdate, findRecord, aggregator } = require('../mongo/mongo_utility');
+
 
 async function getOrganisationRepos(org, endCursor) {
-    let url = process.env.BASE_GRAPHQL_URI;
+    //used proxy server
+
+    let url = `${process.env.BASE_GRAPHQL_URI}` ;
     let first = `first: ${process.env.PER_PAGE}`
     let after = endCursor ? `after: "${endCursor}"` : ''
     query = `query {
         organization(login: "${org}") {
           repositories(${first} ${after} isFork: false
             orderBy: {field: STARGAZERS, direction: DESC}) {
-            edges {
-              cursor
-              node {
+            nodes {
                 name
                 forkCount
                 url
-              }
+                owner {
+                    login
+                }
             }
             pageInfo{
               endCursor
@@ -26,7 +30,6 @@ async function getOrganisationRepos(org, endCursor) {
     body = {
         query
     }
-    // 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
     let headers = {
         "Accept": "application/vnd.github+json",
         "Authorization": `bearer ${process.env.ACCESS_TOKEN.trim()}`
@@ -35,62 +38,78 @@ async function getOrganisationRepos(org, endCursor) {
 }
 
 async function getContributorsOfRepo(org, repoName, numberOfContributors){
-    let url = `${process.env.BASE_REST_URI}/repos/${org}/${repoName}/stats/contributors`
+    console.log(repoName)
+    let url = `${process.env.BASE_REST_URI}/repos/${org}/${repoName}/stats/contributors`;
     let headers = {
         "Accept": "application/vnd.github+json",
         "Authorization": `token ${process.env.ACCESS_TOKEN.trim()}`
     }
     return axios.get(url, {headers}).then(res => {
-        if(res.data) {
-            res.data.sort( (a ,b) => {
-                return b.total - a.total 
-            })
-            return res.data.slice(0,numberOfContributors).map(e => {
-                return {totalCommit: e.total, userName: e.author.login}
-            })
-        } else {
-            return []
-        }
-    }).catch(err => { return []})
+        
+        return findAndUpdate('repos', {name: repoName}, {$push: { contributors:{ $each: res.data, $sort: { total: -1}, $slice:numberOfContributors }}} ).then(res => {
+            return res
+        })
+        
+    }).catch(err => { return err})
 }
 
 exports.getOrganisationRepos = async (req, res, next) => {
-    let repos = []
     let makeRequest = true
     let endCursor = null
     let noOfRepos = req.query.n || parseInt(process.env.DEFAULT_REPO_COUNT)
-    while(makeRequest){
+    let fetchRepos = noOfRepos + 15
+    await findAndDelete('repos', { "owner.login": req.params.organisation });
+    while(makeRequest && fetchRepos > 1){
         try{
             let res1 = await getOrganisationRepos(req.params.organisation, endCursor);
-            repos.push(...res1.data.data.organization.repositories.edges)
+            fetchRepos = fetchRepos - process.env.PER_PAGE
+            createEntry('repos', res1.data.data.organization.repositories.nodes).then()
+            .then(res => {
+                console.log("DB write repos")
+            })
             makeRequest = res1.data.data.organization.repositories.pageInfo.hasNextPage
             endCursor = res1.data.data.organization.repositories.pageInfo.endCursor
         } catch (err) {
             console.log(err);
+            res.json(err)
             break
         }
     }
-    repos.sort((a,b) => {
-        return b.node.forkCount - a.node.forkCount
-    })
-    repos = repos.slice(0,noOfRepos)
-    result = []
-    let numberOfContributors = req.query.m || parseInt(process.env.DEFAULT_USER_COUNT)
-    for (let repo of repos) {
-        try {
-            let contributors = await getContributorsOfRepo(req.params.organisation, repo.node.name, numberOfContributors)
-            result.push({
-                repoName: repo.node.name,
-                organization: req.params.organisation,
-                url: repo.node.url,
-                topMCommittees: contributors,
-                forkCount: repo.node.forkCount
-            })
-        } catch (err) {
-            console.log(err)
-            break
-        }   
+    let limit = parseInt(req.query.n)
+    let repos = await findRecord('repos', { "owner.login": req.params.organisation }, {"forkCount": -1}, {name: true}, limit)
+    console.log(repos)
+    let noContributors = parseInt(req.query.m)
+    try{
+        let response = await Promise.all(repos.map(r => getContributorsOfRepo(req.params.organisation, r.name, noContributors)))
+    } catch (err) {
+        res.json(err)
     }
-    
+
+    let agg = [
+        { '$match': { 
+            'owner.login' : req.params.organisation,
+        }},
+        { $sort : { 'forkCount' : -1 } },
+        { $limit: limit },
+        {
+            '$project': { 
+                'name': true,
+                'url': true,
+                'owner.login': true,
+                'forkCount': true, 
+                'contributors': {
+                    '$map': { 
+                        'input': '$contributors', 
+                        'as': 'c', 
+                        'in': { 
+                            'total': '$$c.total', 
+                            'name': '$$c.author.login'
+                        }
+                    }
+                }
+            }
+        }
+    ]
+    let result = await aggregator('repos', agg)
     res.json(result)
 }
